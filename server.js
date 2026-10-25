@@ -61,8 +61,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-// 6. Start Server (Only if not running as a Vercel Serverless Function)
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+// 6. Start Server (Only if run directly, not when imported by Vercel serverless)
+if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`===============================================`);
     console.log(`🚀 Dis-lite Server is running on port ${PORT}`);
