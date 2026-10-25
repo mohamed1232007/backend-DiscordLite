@@ -35,6 +35,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// Root route (for Vercel & checking status)
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Discord Lite API is running 🚀' });
+});
+
 // 2. Health check endpoint
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Dis-lite backend is running perfectly 🚀' });
@@ -57,10 +62,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-// 6. Start Server
-app.listen(PORT, () => {
-  console.log(`===============================================`);
-  console.log(`🚀 Dis-lite Server is running on port ${PORT}`);
-  console.log(`📡 URL: http://localhost:${PORT}`);
-  console.log(`===============================================`);
-});
+// 6. Start Server (Only if not running as a Vercel Serverless Function)
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`===============================================`);
+    console.log(`🚀 Dis-lite Server is running on port ${PORT}`);
+    console.log(`📡 URL: http://localhost:${PORT}`);
+    console.log(`===============================================`);
+  });
+}
+
+module.exports = app;
