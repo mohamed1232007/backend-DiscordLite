@@ -25,6 +25,7 @@ create table if not exists public.call_participants (
   id uuid default gen_random_uuid() primary key,
   room_id uuid references public.call_rooms(id) on delete cascade not null,
   user_id uuid references public.users(id) on delete cascade not null,
+  peer_id text,
   invited_by uuid references public.users(id) on delete cascade not null,
   status text not null default 'invited' check (status in ('invited', 'active', 'declined', 'left')),
   noise_suppression_enabled boolean not null default true,
@@ -32,6 +33,12 @@ create table if not exists public.call_participants (
   joined_at timestamp with time zone default null,
   unique (room_id, user_id)
 );
+
+alter table public.call_participants
+  add column if not exists peer_id text;
+create unique index if not exists call_participants_peer_id_idx
+  on public.call_participants (peer_id)
+  where peer_id is not null;
 
 create index if not exists call_participants_user_status_idx
   on public.call_participants (user_id, status);
