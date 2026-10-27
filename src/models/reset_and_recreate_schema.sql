@@ -1,22 +1,23 @@
--- DESTRUCTIVE: This script deletes all data in the application tables listed below.
--- Back up the database before running it. It does not drop Supabase system tables.
+-- DESTRUCTIVE: Running this script permanently deletes all data in the ten
+-- application tables below. Back up the database before running it.
+-- It does not drop Supabase system tables or Storage objects.
 
 begin;
 
 create extension if not exists "pgcrypto";
 
 drop table if exists
-  public.calls,
   public.call_participants,
+  public.calls,
   public.call_rooms,
   public.channel_messages,
   public.direct_messages,
   public.friends,
-  public.channels,
   public.server_members,
+  public.channels,
   public.servers,
   public.users
-cascade;
+;
 
 create table public.users (
   id uuid default gen_random_uuid() primary key,
@@ -112,8 +113,23 @@ create table public.call_participants (
   unique (room_id, user_id)
 );
 
-create unique index call_participants_peer_id_idx
-  on public.call_participants (peer_id)
+create or replace function public.default_call_noise_suppression()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.noise_suppression_enabled := coalesce(new.noise_suppression_enabled, true);
+  return new;
+end;
+$$;
+create trigger call_participants_noise_suppression_default
+before insert or update of noise_suppression_enabled
+on public.call_participants
+for each row
+execute function public.default_call_noise_suppression();
+
+create unique index call_participants_room_peer_id_idx
+  on public.call_participants (room_id, peer_id)
   where peer_id is not null;
 create index call_participants_user_status_idx
   on public.call_participants (user_id, status);
@@ -144,6 +160,12 @@ create policy "Allow all on call participants" on public.call_participants for a
 
 do $$
 begin
+  if not exists (
+    select 1 from pg_publication where pubname = 'supabase_realtime'
+  ) then
+    raise exception 'Supabase Realtime publication does not exist.';
+  end if;
+
   if not exists (
     select 1 from pg_publication_tables
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'channel_messages'
