@@ -34,6 +34,13 @@ create table if not exists public.call_participants (
   unique (room_id, user_id)
 );
 
+update public.call_participants
+set noise_suppression_enabled = true
+where noise_suppression_enabled is null;
+alter table public.call_participants
+  alter column noise_suppression_enabled set default true,
+  alter column noise_suppression_enabled set not null;
+
 alter table public.call_participants
   add column if not exists peer_id text;
 create unique index if not exists call_participants_peer_id_idx
