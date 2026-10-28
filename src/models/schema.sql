@@ -147,16 +147,28 @@ alter table public.calls enable row level security;
 alter table public.call_rooms enable row level security;
 alter table public.call_participants enable row level security;
 
-create policy "Allow all operations for backend service role" on public.users for all using (true);
-create policy "Allow all operations for servers" on public.servers for all using (true);
-create policy "Allow all operations for members" on public.server_members for all using (true);
-create policy "Allow all operations for channels" on public.channels for all using (true);
-create policy "Allow all operations for channel_messages" on public.channel_messages for all using (true);
-create policy "Allow all operations for direct_messages" on public.direct_messages for all using (true);
-create policy "Allow all operations for friends" on public.friends for all using (true);
-create policy "Allow all on calls" on public.calls for all using (true);
-create policy "Allow all on call rooms" on public.call_rooms for all using (true);
-create policy "Allow all on call participants" on public.call_participants for all using (true);
+do $$
+declare
+  policy_row record;
+begin
+  for policy_row in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = any(array[
+        'users', 'servers', 'server_members', 'channels', 'channel_messages',
+        'direct_messages', 'friends', 'calls', 'call_rooms', 'call_participants'
+      ])
+  loop
+    execute format(
+      'drop policy if exists %I on %I.%I',
+      policy_row.policyname,
+      policy_row.schemaname,
+      policy_row.tablename
+    );
+  end loop;
+end
+$$;
 
 do $$
 begin
@@ -178,11 +190,11 @@ begin
   ) then
     alter publication supabase_realtime add table public.direct_messages;
   end if;
-  if not exists (
+  if exists (
     select 1 from pg_publication_tables
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'users'
   ) then
-    alter publication supabase_realtime add table public.users;
+    alter publication supabase_realtime drop table public.users;
   end if;
   if not exists (
     select 1 from pg_publication_tables

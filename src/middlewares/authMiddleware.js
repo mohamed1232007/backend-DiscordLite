@@ -1,6 +1,10 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dislite_super_secret_jwt_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 bytes.');
+}
 
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -19,4 +23,3 @@ const authMiddleware = (req, res, next) => {
 };
 
 module.exports = { authMiddleware, JWT_SECRET };
-

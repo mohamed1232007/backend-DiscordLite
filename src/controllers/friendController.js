@@ -1,4 +1,6 @@
 const supabase = require('../config/supabase');
+const USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // 1. جلب قائمة الأصدقاء للمستخدم الحالي
 const getFriends = async (req, res) => {
@@ -48,11 +50,14 @@ const searchUser = async (req, res) => {
     const { username } = req.query;
     const currentUserId = req.user.id;
 
-    if (!username || username.trim().length === 0) {
+    if (typeof username !== 'string' || username.trim().length < 3 || username.trim().length > 32) {
       return res.status(400).json({ error: 'Search query is required.' });
     }
 
     const cleanQuery = username.toLowerCase().trim();
+    if (!USERNAME_PATTERN.test(cleanQuery)) {
+      return res.status(400).json({ error: 'Username may contain only letters, numbers, and underscores.' });
+    }
 
     // البحث في المستخدمين مع استبعاد الحساب الحالي
     const { data: users, error } = await supabase
@@ -78,10 +83,10 @@ const searchUser = async (req, res) => {
 const sendFriendRequest = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { targetUserId } = req.body;
+    const { targetUserId } = req.body || {};
 
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'Target user ID is required.' });
+    if (typeof targetUserId !== 'string' || !UUID_PATTERN.test(targetUserId)) {
+      return res.status(400).json({ error: 'A valid target user ID is required.' });
     }
 
     if (targetUserId === userId) {
@@ -105,6 +110,19 @@ const sendFriendRequest = async (req, res) => {
         return res.status(400).json({ error: 'You are already friends!' });
       }
       return res.status(400).json({ error: 'A friend request is already pending.' });
+    }
+
+    const { data: targetUser, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', targetUserId)
+      .maybeSingle();
+    if (userError) {
+      console.error('Target user check error:', userError);
+      return res.status(500).json({ error: 'Failed to verify target user.' });
+    }
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found.' });
     }
 
     // إنشاء طلب صداقة (pending)
@@ -214,4 +232,3 @@ module.exports = {
   getPendingRequests,
   respondToRequest
 };
-

@@ -3,38 +3,60 @@ const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 const { JWT_SECRET } = require('../middlewares/authMiddleware');
 
+const USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // 1. تسجيل مستخدم جديد (Register)
 const register = async (req, res) => {
   try {
-    const { email, password, username, displayName } = req.body;
+    const { email, password, username, displayName } = req.body || {};
 
-    if (!email || !password || !username) {
+    if (
+      typeof email !== 'string'
+      || typeof password !== 'string'
+      || typeof username !== 'string'
+      || !email.trim()
+      || !password
+      || !username.trim()
+    ) {
       return res.status(400).json({ error: 'Email, password, and username are required.' });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
     }
 
     const cleanUsername = username.toLowerCase().trim();
     const cleanEmail = email.toLowerCase().trim();
+    if (!USERNAME_PATTERN.test(cleanUsername)) {
+      return res.status(400).json({ error: 'Username must be 3-32 characters using letters, numbers, and underscores.' });
+    }
+    if (cleanEmail.length > 254 || !EMAIL_PATTERN.test(cleanEmail)) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+    if (password.length < 6 || Buffer.byteLength(password, 'utf8') > 72) {
+      return res.status(400).json({ error: 'Password must be between 6 and 72 bytes.' });
+    }
+    if (displayName !== undefined && (typeof displayName !== 'string' || displayName.trim().length > 64)) {
+      return res.status(400).json({ error: 'Display name must be 64 characters or fewer.' });
+    }
 
-    // التحقق مما إذا كان الإيميل أو اسم المستخدم مسجلين مسبقاً
-    const { data: existingUsers, error: checkError } = await supabase
-      .from('users')
-      .select('id, email, username')
-      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`);
+    const [{ data: existingEmail, error: emailError }, { data: existingUsername, error: usernameError }] = await Promise.all([
+      supabase
+        .from('users')
+        .select('id')
+        .eq('email', cleanEmail)
+        .maybeSingle(),
+      supabase
+        .from('users')
+        .select('id')
+        .eq('username', cleanUsername)
+        .maybeSingle(),
+    ]);
 
-    if (checkError) {
-      console.error('Check user error:', checkError);
+    if (emailError || usernameError) {
+      console.error('Check user error:', emailError || usernameError);
       return res.status(500).json({ error: 'Database error checking user.' });
     }
 
-    if (existingUsers && existingUsers.length > 0) {
-      const emailExists = existingUsers.some(u => u.email === cleanEmail);
-      if (emailExists) {
-        return res.status(400).json({ error: 'Email is already registered.' });
-      }
+    if (existingEmail) return res.status(400).json({ error: 'Email is already registered.' });
+    if (existingUsername) {
       return res.status(400).json({ error: 'Username is already taken.' });
     }
 
@@ -83,18 +105,21 @@ const register = async (req, res) => {
 // 2. تسجيل الدخول (Login)
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
 
-    if (!email || !password) {
+    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
+    if (cleanEmail.length > 254 || !EMAIL_PATTERN.test(cleanEmail) || Buffer.byteLength(password, 'utf8') > 72) {
+      return res.status(400).json({ error: 'Invalid email or password.' });
+    }
 
     // البحث عن المستخدم بالإيميل
     const { data: user, error: findError } = await supabase
       .from('users')
-      .select('*')
+      .select('id, email, password_hash, username, display_name, avatar_url, custom_status, status, created_at')
       .eq('email', cleanEmail)
       .single();
 
@@ -155,4 +180,3 @@ const getMe = async (req, res) => {
 };
 
 module.exports = { register, login, getMe };
-

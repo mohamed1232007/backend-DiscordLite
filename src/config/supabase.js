@@ -4,10 +4,10 @@ const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 // نأخذ الـ Secret Key أو الـ Publishable Key المتاحين في .env
-const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+const supabaseKey = process.env.SUPABASE_SECRET_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error('❌ Missing Supabase URL or Key in backend/.env');
+  throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY must be configured in the backend environment.');
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey, {
@@ -18,4 +18,3 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
 });
 
 module.exports = supabase;
-
