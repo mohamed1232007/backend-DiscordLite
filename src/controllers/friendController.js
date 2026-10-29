@@ -195,32 +195,51 @@ const getPendingRequests = async (req, res) => {
 const respondToRequest = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { requestId, action } = req.body; // action: 'accept' or 'decline'
+    const { requestId, action } = req.body || {}; // action: 'accept' or 'decline'
 
-    if (!requestId || !['accept', 'decline'].includes(action)) {
+    if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId) || !['accept', 'decline'].includes(action)) {
       return res.status(400).json({ error: 'Invalid request parameters.' });
     }
 
     if (action === 'accept') {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('friends')
         .update({ status: 'accepted' })
         .eq('id', requestId)
-        .eq('friend_id', userId);
+        .eq('friend_id', userId)
+        .eq('status', 'pending')
+        .select('id')
+        .maybeSingle();
 
-      if (error) return res.status(500).json({ error: 'Failed to accept request.' });
+      if (error) {
+        console.error('Accept friend request error:', error);
+        return res.status(500).json({ error: 'Failed to accept request.' });
+      }
+      if (!data) {
+        return res.status(404).json({ error: 'Friend request not found or already handled.' });
+      }
       return res.status(200).json({ message: 'Friend request accepted!' });
-    } else {
-      const { error } = await supabase
-        .from('friends')
-        .delete()
-        .eq('id', requestId)
-        .eq('friend_id', userId);
-
-      if (error) return res.status(500).json({ error: 'Failed to decline request.' });
-      return res.status(200).json({ message: 'Friend request declined.' });
     }
+
+    const { data, error } = await supabase
+      .from('friends')
+      .delete()
+      .eq('id', requestId)
+      .eq('friend_id', userId)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      console.error('Decline friend request error:', error);
+      return res.status(500).json({ error: 'Failed to decline request.' });
+    }
+    if (!data) {
+      return res.status(404).json({ error: 'Friend request not found or already handled.' });
+    }
+    return res.status(200).json({ message: 'Friend request declined.' });
   } catch (err) {
+    console.error('respondToRequest error:', err);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 };

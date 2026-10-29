@@ -1,25 +1,41 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const MIN_SECRET_BYTES = 32;
 
-if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
-  throw new Error('JWT_SECRET must be configured with at least 32 bytes.');
-}
+// نقرأ السر وقت الطلب بدل وقت تحميل الموديول، حتى لا يسقط السيرفر بالكامل
+// (خصوصاً على Vercel) إذا كان المتغير غير مضبوط في البيئة.
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || Buffer.byteLength(secret, 'utf8') < MIN_SECRET_BYTES) {
+    return null;
+  }
+  return secret;
+};
 
 const authMiddleware = (req, res, next) => {
+  const jwtSecret = getJwtSecret();
+  if (!jwtSecret) {
+    console.error('JWT_SECRET is missing or shorter than 32 bytes. Set it in the backend environment.');
+    return res.status(500).json({ error: 'Server authentication is not configured.' });
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.slice('Bearer '.length).trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Access denied. No token provided.' });
+  }
+
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, jwtSecret);
     req.user = decoded;
-    next();
+    return next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token.' });
   }
 };
 
-module.exports = { authMiddleware, JWT_SECRET };
+module.exports = { authMiddleware, getJwtSecret };

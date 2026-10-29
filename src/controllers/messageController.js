@@ -13,19 +13,31 @@ const checkAcceptedFriendship = async (userId, friendId) => {
   return { isFriend: !!data, error };
 };
 
+const MAX_UNREAD_PAGES = 20;
+
 const getUnreadDirectMessages = async (req, res) => {
   const { after, through } = req.query;
-  const afterDate = new Date(after);
-  const throughDate = new Date(through);
+  const throughDate = through === undefined ? new Date() : new Date(through);
 
-  if (
-    typeof after !== 'string'
-    || typeof through !== 'string'
-    || Number.isNaN(afterDate.getTime())
-    || Number.isNaN(throughDate.getTime())
-    || afterDate >= throughDate
-  ) {
+  if (Number.isNaN(throughDate.getTime())) {
     return res.status(400).json({ error: 'A valid time range is required.' });
+  }
+
+  // أول طلب (أو إعادة مزامنة بعد انحراف ساعة الجهاز): نرجّع مؤشر السيرفر فقط
+  // بدون عدّ أي رسالة، ثم تعتمد الواجهة على توقيت السيرفر في كل الطلبات التالية.
+  if (after === undefined) {
+    return res.status(200).json({ unreadBySender: {}, cursor: throughDate.toISOString() });
+  }
+  if (typeof after !== 'string') {
+    return res.status(400).json({ error: 'A valid time range is required.' });
+  }
+
+  const afterDate = new Date(after);
+  if (Number.isNaN(afterDate.getTime())) {
+    return res.status(400).json({ error: 'A valid time range is required.' });
+  }
+  if (afterDate >= throughDate) {
+    return res.status(200).json({ unreadBySender: {}, cursor: throughDate.toISOString() });
   }
 
   try {
@@ -33,8 +45,9 @@ const getUnreadDirectMessages = async (req, res) => {
     const pageSize = 500;
     let offset = 0;
     let hasMore = true;
+    let pages = 0;
 
-    while (hasMore) {
+    while (hasMore && pages < MAX_UNREAD_PAGES) {
       const { data: messages, error } = await supabase
         .from('direct_messages')
         .select('sender_id')
@@ -55,9 +68,14 @@ const getUnreadDirectMessages = async (req, res) => {
 
       hasMore = (messages || []).length === pageSize;
       offset += pageSize;
+      pages += 1;
     }
 
-    return res.status(200).json({ unreadBySender });
+    if (hasMore) {
+      console.warn('[Messages] Unread scan stopped at the page limit; some counts may be incomplete.');
+    }
+
+    return res.status(200).json({ unreadBySender, cursor: throughDate.toISOString() });
   } catch (error) {
     console.error('getUnreadDirectMessages error:', error);
     return res.status(500).json({ error: 'Internal server error.' });
@@ -65,13 +83,30 @@ const getUnreadDirectMessages = async (req, res) => {
 };
 
 // 1. جلب سجل الرسائل المباشرة بين المستخدمين
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 100;
+
 const getDirectMessages = async (req, res) => {
   try {
     const currentUserId = req.user.id;
     const { friendId } = req.params;
+    const { before } = req.query;
 
     if (typeof friendId !== 'string' || !UUID_PATTERN.test(friendId)) {
       return res.status(400).json({ error: 'A valid friend ID is required.' });
+    }
+
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const pageSize = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+
+    let beforeDate = null;
+    if (before !== undefined) {
+      beforeDate = new Date(before);
+      if (typeof before !== 'string' || Number.isNaN(beforeDate.getTime())) {
+        return res.status(400).json({ error: 'A valid message cursor is required.' });
+      }
     }
 
     const { isFriend, error: friendshipError } = await checkAcceptedFriendship(currentUserId, friendId);
@@ -83,25 +118,39 @@ const getDirectMessages = async (req, res) => {
       return res.status(403).json({ error: 'You can only view messages with accepted friends.' });
     }
 
-    // جلب كل الرسائل المتبادلة بين الطرفين مرتبة زمنياً
-    const { data: messages, error } = await supabase
+    // جلب صفحة من الرسائل المتبادلة بين الطرفين مرتبة زمنياً (الأحدث أولاً)
+    let query = supabase
       .from('direct_messages')
       .select('*')
       .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`)
       .order('created_at', { ascending: false })
-      .limit(100);
+      .order('id', { ascending: false })
+      .limit(pageSize + 1);
+
+    if (beforeDate) {
+      query = query.lt('created_at', beforeDate.toISOString());
+    }
+
+    const { data: messages, error } = await query;
 
     if (error) {
       console.error('Fetch DMs error:', error);
       return res.status(500).json({ error: 'Failed to fetch messages.' });
     }
 
-    return res.status(200).json({ messages: (messages || []).reverse() });
+    const rows = messages || [];
+    const hasMore = rows.length > pageSize;
+    const page = hasMore ? rows.slice(0, pageSize) : rows;
+
+    return res.status(200).json({ messages: page.reverse(), hasMore });
   } catch (err) {
     console.error('getDirectMessages error:', err);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 };
+
+const FILE_URL_PATTERN = /^https?:\/\/[^\s]+$/i;
+const MAX_FILE_URL_LENGTH = 2048;
 
 // 2. إرسال رسالة مباشرة جديدة
 const sendDirectMessage = async (req, res) => {
@@ -117,6 +166,16 @@ const sendDirectMessage = async (req, res) => {
       || content.length > 4000
     ) {
       return res.status(400).json({ error: 'Receiver ID and message content are required.' });
+    }
+
+    if (fileUrl !== undefined && fileUrl !== null) {
+      if (
+        typeof fileUrl !== 'string'
+        || fileUrl.length > MAX_FILE_URL_LENGTH
+        || !FILE_URL_PATTERN.test(fileUrl)
+      ) {
+        return res.status(400).json({ error: 'The attachment link must be a valid http(s) URL.' });
+      }
     }
 
     const { isFriend, error: friendshipError } = await checkAcceptedFriendship(currentUserId, receiverId);
