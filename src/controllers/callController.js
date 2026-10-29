@@ -17,6 +17,40 @@ const hasAcceptedFriendship = async (userId, friendId) => {
   return !!data;
 };
 
+const endRoomIfNeeded = async (roomId) => {
+  const { data: participants, error } = await supabase
+    .from('call_participants')
+    .select('status')
+    .eq('room_id', roomId);
+  if (error) throw error;
+
+  const activeCount = participants.filter(({ status }) => status === 'active').length;
+  if (participants.length <= 2 || activeCount === 0) {
+    const { error: roomError } = await supabase
+      .from('call_rooms')
+      .update({ status: 'ended' })
+      .eq('id', roomId);
+    if (roomError) throw roomError;
+  }
+};
+
+const leaveStaleCalls = async (userId, exceptRoomId = null) => {
+  let query = supabase
+    .from('call_participants')
+    .update({ status: 'left' })
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (exceptRoomId) query = query.neq('room_id', exceptRoomId);
+
+  const { data, error } = await query.select('room_id');
+  if (error) throw error;
+
+  const roomIds = new Set((data || []).map(({ room_id }) => room_id));
+  for (const roomId of roomIds) {
+    await endRoomIfNeeded(roomId);
+  }
+};
+
 const getInvitations = async (req, res) => {
   try {
     const { data: invitations, error } = await supabase
@@ -24,6 +58,7 @@ const getInvitations = async (req, res) => {
       .select('room_id, invited_by, created_at')
       .eq('user_id', req.user.id)
       .eq('status', 'invited')
+      .gte('created_at', new Date(Date.now() - 60_000).toISOString())
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -138,6 +173,8 @@ const createRoom = async (req, res) => {
       return res.status(403).json({ error: 'Calls are limited to accepted friends.' });
     }
 
+    await leaveStaleCalls(req.user.id);
+
     const { data: room, error: roomError } = await supabase
       .from('call_rooms')
       .insert({ created_by: req.user.id })
@@ -201,6 +238,8 @@ const answerCall = async (req, res) => {
     if (room?.status !== 'active') {
       return res.status(409).json({ error: 'This call has already ended.' });
     }
+
+    await leaveStaleCalls(req.user.id, roomId);
 
     const { data: membership, error } = await supabase
       .from('call_participants')
@@ -340,22 +379,7 @@ const leaveCall = async (req, res) => {
       .maybeSingle();
     if (error) throw error;
 
-    if (membership && status === 'left') {
-      const { data: participants, error: participantsError } = await supabase
-        .from('call_participants')
-        .select('status')
-        .eq('room_id', roomId);
-      if (participantsError) throw participantsError;
-
-      const activeCount = participants.filter(({ status: participantStatus }) => participantStatus === 'active').length;
-      if (participants.length <= 2 || activeCount === 0) {
-        const { error: roomError } = await supabase
-          .from('call_rooms')
-          .update({ status: 'ended' })
-          .eq('id', roomId);
-        if (roomError) throw roomError;
-      }
-    }
+    if (membership && status === 'left') await endRoomIfNeeded(roomId);
 
     return res.status(200).json({ updated: !!membership });
   } catch (error) {
