@@ -13,6 +13,57 @@ const checkAcceptedFriendship = async (userId, friendId) => {
   return { isFriend: !!data, error };
 };
 
+const getUnreadDirectMessages = async (req, res) => {
+  const { after, through } = req.query;
+  const afterDate = new Date(after);
+  const throughDate = new Date(through);
+
+  if (
+    typeof after !== 'string'
+    || typeof through !== 'string'
+    || Number.isNaN(afterDate.getTime())
+    || Number.isNaN(throughDate.getTime())
+    || afterDate >= throughDate
+  ) {
+    return res.status(400).json({ error: 'A valid time range is required.' });
+  }
+
+  try {
+    const unreadBySender = {};
+    const pageSize = 500;
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: messages, error } = await supabase
+        .from('direct_messages')
+        .select('sender_id')
+        .eq('receiver_id', req.user.id)
+        .gt('created_at', afterDate.toISOString())
+        .lte('created_at', throughDate.toISOString())
+        .order('created_at', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        console.error('Fetch unread DMs error:', error);
+        return res.status(500).json({ error: 'Failed to fetch unread messages.' });
+      }
+
+      for (const { sender_id: senderId } of messages || []) {
+        unreadBySender[senderId] = (unreadBySender[senderId] || 0) + 1;
+      }
+
+      hasMore = (messages || []).length === pageSize;
+      offset += pageSize;
+    }
+
+    return res.status(200).json({ unreadBySender });
+  } catch (error) {
+    console.error('getUnreadDirectMessages error:', error);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+};
+
 // 1. جلب سجل الرسائل المباشرة بين المستخدمين
 const getDirectMessages = async (req, res) => {
   try {
@@ -103,6 +154,7 @@ const sendDirectMessage = async (req, res) => {
 };
 
 module.exports = {
+  getUnreadDirectMessages,
   getDirectMessages,
   sendDirectMessage
 };
