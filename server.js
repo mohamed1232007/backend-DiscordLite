@@ -14,13 +14,13 @@ app.disable('x-powered-by');
 const allowedOrigins = new Set([
   process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || 'https://discord-lite-mocha.vercel.app',
   'http://tauri.localhost',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
 ]);
 
 app.use(cors({
   origin(origin, callback) {
-    const isLocalDevelopment = process.env.NODE_ENV !== 'production'
-      && ['http://localhost:5173', 'http://127.0.0.1:5173'].includes(origin);
-    callback(null, !origin || allowedOrigins.has(origin) || isLocalDevelopment);
+    callback(null, !origin || allowedOrigins.has(origin));
   },
 }));
 app.use(express.json({ limit: '1mb' }));
