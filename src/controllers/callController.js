@@ -25,7 +25,8 @@ const endRoomIfNeeded = async (roomId) => {
   if (error) throw error;
 
   const activeCount = participants.filter(({ status }) => status === 'active').length;
-  if (participants.length <= 2 || activeCount === 0) {
+  const invitedCount = participants.filter(({ status }) => status === 'invited').length;
+  if (activeCount === 0 || (activeCount === 1 && invitedCount === 0)) {
     const { error: roomError } = await supabase
       .from('call_rooms')
       .update({ status: 'ended' })
@@ -379,7 +380,7 @@ const leaveCall = async (req, res) => {
       .maybeSingle();
     if (error) throw error;
 
-    if (membership && status === 'left') await endRoomIfNeeded(roomId);
+    if (membership) await endRoomIfNeeded(roomId);
 
     return res.status(200).json({ updated: !!membership });
   } catch (error) {
