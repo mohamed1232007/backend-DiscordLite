@@ -263,6 +263,11 @@ const answerCall = async (req, res) => {
 
 const createLiveKitToken = async (req, res) => {
   const { roomId } = req.params;
+  const { participantType } = req.body || {};
+  if (participantType !== undefined && participantType !== 'screen') {
+    return res.status(400).json({ error: 'Invalid LiveKit participant type.' });
+  }
+  const isScreenPublisher = participantType === 'screen';
   if (!isUuid(roomId)) return res.status(400).json({ error: 'A valid room ID is required.' });
 
   const serverUrl = process.env.LIVEKIT_URL?.trim();
@@ -303,15 +308,15 @@ const createLiveKitToken = async (req, res) => {
     }
 
     const accessToken = new AccessToken(apiKey, apiSecret, {
-      identity: req.user.id,
-      ttl: '10m',
+      identity: isScreenPublisher ? `${req.user.id}:screen` : req.user.id,
+      ttl: isScreenPublisher ? '2h' : '10m',
     });
     accessToken.addGrant({
       roomJoin: true,
       room: roomId,
       canPublish: true,
-      canSubscribe: true,
-      canPublishData: true,
+      canSubscribe: !isScreenPublisher,
+      canPublishData: !isScreenPublisher,
     });
     const token = await accessToken.toJwt();
     return res.status(200).json({ token, serverUrl });
