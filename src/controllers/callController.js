@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { AccessToken } = require('livekit-server-sdk');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -129,7 +130,7 @@ const getRoom = async (req, res) => {
 
     const { data: rows, error: rowsError } = await supabase
       .from('call_participants')
-      .select('user_id, status, invited_by, noise_suppression_enabled, peer_id')
+      .select('user_id, status, invited_by, noise_suppression_enabled')
       .eq('room_id', roomId);
     if (rowsError) throw rowsError;
     if (!rows.some(({ user_id }) => user_id === req.user.id)) {
@@ -158,12 +159,9 @@ const getRoom = async (req, res) => {
 };
 
 const createRoom = async (req, res) => {
-  const { targetUserId, peerId, noiseSuppressionEnabled } = req.body || {};
+  const { targetUserId, noiseSuppressionEnabled } = req.body || {};
   if (!isUuid(targetUserId) || targetUserId === req.user.id) {
     return res.status(400).json({ error: 'A valid friend ID is required.' });
-  }
-  if (typeof peerId !== 'string' || peerId.length < 1 || peerId.length > 128) {
-    return res.status(400).json({ error: 'A valid peer ID is required.' });
   }
   if (typeof noiseSuppressionEnabled !== 'boolean') {
     return res.status(400).json({ error: 'Noise-suppression status is required.' });
@@ -189,7 +187,6 @@ const createRoom = async (req, res) => {
         {
           room_id: room.id,
           user_id: req.user.id,
-          peer_id: peerId,
           invited_by: req.user.id,
           status: 'active',
           noise_suppression_enabled: noiseSuppressionEnabled,
@@ -221,8 +218,8 @@ const createRoom = async (req, res) => {
 
 const answerCall = async (req, res) => {
   const { roomId } = req.params;
-  const { peerId, noiseSuppressionEnabled } = req.body || {};
-  if (!isUuid(roomId) || typeof peerId !== 'string' || peerId.length < 1 || peerId.length > 128) {
+  const { noiseSuppressionEnabled } = req.body || {};
+  if (!isUuid(roomId)) {
     return res.status(400).json({ error: 'Invalid call invitation.' });
   }
   if (typeof noiseSuppressionEnabled !== 'boolean') {
@@ -246,7 +243,6 @@ const answerCall = async (req, res) => {
       .from('call_participants')
       .update({
         status: 'active',
-        peer_id: peerId,
         noise_suppression_enabled: noiseSuppressionEnabled,
         joined_at: new Date().toISOString(),
       })
@@ -262,6 +258,66 @@ const answerCall = async (req, res) => {
   } catch (error) {
     console.error('Answer call error:', error);
     return res.status(500).json({ error: 'Failed to join the call.' });
+  }
+};
+
+const createLiveKitToken = async (req, res) => {
+  const { roomId } = req.params;
+  if (!isUuid(roomId)) return res.status(400).json({ error: 'A valid room ID is required.' });
+
+  const serverUrl = process.env.LIVEKIT_URL?.trim();
+  const apiKey = process.env.LIVEKIT_API_KEY?.trim();
+  const apiSecret = process.env.LIVEKIT_API_SECRET?.trim();
+  if (!serverUrl || !apiKey || !apiSecret) {
+    console.error('LiveKit token service is not configured. Set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET.');
+    return res.status(503).json({ error: 'LiveKit calling is not configured on the server.' });
+  }
+  try {
+    const protocol = new URL(serverUrl).protocol;
+    if (!['ws:', 'wss:', 'http:', 'https:'].includes(protocol)) throw new Error('Unsupported LiveKit URL protocol.');
+  } catch (error) {
+    console.error('LIVEKIT_URL must be a valid LiveKit WebSocket URL:', error);
+    return res.status(503).json({ error: 'LiveKit calling is not configured correctly on the server.' });
+  }
+
+  try {
+    const { data: room, error: roomError } = await supabase
+      .from('call_rooms')
+      .select('status')
+      .eq('id', roomId)
+      .maybeSingle();
+    if (roomError) throw roomError;
+    if (room?.status !== 'active') {
+      return res.status(409).json({ error: 'This call has already ended.' });
+    }
+
+    const { data: membership, error: membershipError } = await supabase
+      .from('call_participants')
+      .select('status')
+      .eq('room_id', roomId)
+      .eq('user_id', req.user.id)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (membership?.status !== 'active') {
+      return res.status(403).json({ error: 'Only active call participants can join LiveKit.' });
+    }
+
+    const accessToken = new AccessToken(apiKey, apiSecret, {
+      identity: req.user.id,
+      ttl: '10m',
+    });
+    accessToken.addGrant({
+      roomJoin: true,
+      room: roomId,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+    const token = await accessToken.toJwt();
+    return res.status(200).json({ token, serverUrl });
+  } catch (error) {
+    console.error('Create LiveKit token error:', error);
+    return res.status(500).json({ error: 'Failed to authorize LiveKit call access.' });
   }
 };
 
@@ -391,6 +447,7 @@ const leaveCall = async (req, res) => {
 
 module.exports = {
   answerCall,
+  createLiveKitToken,
   createRoom,
   getInvitations,
   getRoom,

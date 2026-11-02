@@ -104,7 +104,6 @@ create table public.call_participants (
   id uuid default gen_random_uuid() primary key,
   room_id uuid references public.call_rooms(id) on delete cascade not null,
   user_id uuid references public.users(id) on delete cascade not null,
-  peer_id text,
   invited_by uuid references public.users(id) on delete cascade not null,
   status text not null default 'invited' check (status in ('invited', 'active', 'declined', 'left')),
   noise_suppression_enabled boolean not null default true,
@@ -128,9 +127,6 @@ on public.call_participants
 for each row
 execute function public.default_call_noise_suppression();
 
-create unique index call_participants_room_peer_id_idx
-  on public.call_participants (room_id, peer_id)
-  where peer_id is not null;
 create index call_participants_user_status_idx
   on public.call_participants (user_id, status);
 create index call_participants_room_status_idx

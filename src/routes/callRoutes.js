@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   answerCall,
+  createLiveKitToken,
   createRoom,
   getInvitations,
   getRoom,
@@ -17,6 +18,7 @@ router.get('/invitations', getInvitations);
 router.post('/', createRoom);
 router.get('/:roomId', getRoom);
 router.post('/:roomId/answer', answerCall);
+router.post('/:roomId/token', createLiveKitToken);
 router.post('/:roomId/invitations', inviteParticipants);
 router.patch('/:roomId/noise', updateNoiseSuppression);
 router.post('/:roomId/leave', leaveCall);
