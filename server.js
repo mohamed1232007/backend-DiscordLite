@@ -68,8 +68,8 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`===============================================`);
-    console.log(`🚀 Dis-lite Server is running on port ${PORT}`);
-    console.log(`📡 URL: http://localhost:${PORT}`);
+    console.log(`Dis-lite Server is running on port ${PORT}`);
+    console.log(`URL: http://localhost:${PORT}`);
     console.log(`===============================================`);
   });
 }

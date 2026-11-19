@@ -26,7 +26,7 @@ const getUnreadDirectMessages = async (req, res) => {
   // أول طلب (أو إعادة مزامنة بعد انحراف ساعة الجهاز): نرجّع مؤشر السيرفر فقط
   // بدون عدّ أي رسالة، ثم تعتمد الواجهة على توقيت السيرفر في كل الطلبات التالية.
   if (after === undefined) {
-    return res.status(200).json({ unreadBySender: {}, cursor: throughDate.toISOString() });
+    return res.status(200).json({ unreadBySender: {}, latestMessages: [], cursor: throughDate.toISOString() });
   }
   if (typeof after !== 'string') {
     return res.status(400).json({ error: 'A valid time range is required.' });
@@ -37,11 +37,12 @@ const getUnreadDirectMessages = async (req, res) => {
     return res.status(400).json({ error: 'A valid time range is required.' });
   }
   if (afterDate >= throughDate) {
-    return res.status(200).json({ unreadBySender: {}, cursor: throughDate.toISOString() });
+    return res.status(200).json({ unreadBySender: {}, latestMessages: [], cursor: throughDate.toISOString() });
   }
 
   try {
     const unreadBySender = {};
+    const latestMessages = [];
     const pageSize = 500;
     let offset = 0;
     let hasMore = true;
@@ -50,7 +51,7 @@ const getUnreadDirectMessages = async (req, res) => {
     while (hasMore && pages < MAX_UNREAD_PAGES) {
       const { data: messages, error } = await supabase
         .from('direct_messages')
-        .select('sender_id')
+        .select('id, sender_id, content, file_url, created_at')
         .eq('receiver_id', req.user.id)
         .gt('created_at', afterDate.toISOString())
         .lte('created_at', throughDate.toISOString())
@@ -62,8 +63,15 @@ const getUnreadDirectMessages = async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch unread messages.' });
       }
 
-      for (const { sender_id: senderId } of messages || []) {
-        unreadBySender[senderId] = (unreadBySender[senderId] || 0) + 1;
+      for (const msg of messages || []) {
+        unreadBySender[msg.sender_id] = (unreadBySender[msg.sender_id] || 0) + 1;
+        latestMessages.push({
+          id: msg.id,
+          senderId: msg.sender_id,
+          content: msg.content,
+          fileUrl: msg.file_url,
+          createdAt: msg.created_at,
+        });
       }
 
       hasMore = (messages || []).length === pageSize;
@@ -75,7 +83,11 @@ const getUnreadDirectMessages = async (req, res) => {
       console.warn('[Messages] Unread scan stopped at the page limit; some counts may be incomplete.');
     }
 
-    return res.status(200).json({ unreadBySender, cursor: throughDate.toISOString() });
+    return res.status(200).json({
+      unreadBySender,
+      latestMessages: latestMessages.slice(-15),
+      cursor: throughDate.toISOString(),
+    });
   } catch (error) {
     console.error('getUnreadDirectMessages error:', error);
     return res.status(500).json({ error: 'Internal server error.' });
