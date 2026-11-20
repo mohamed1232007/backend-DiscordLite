@@ -83,9 +83,41 @@ const getUnreadDirectMessages = async (req, res) => {
       console.warn('[Messages] Unread scan stopped at the page limit; some counts may be incomplete.');
     }
 
+    const senderIds = [...new Set(latestMessages.map((message) => message.senderId).filter(Boolean))];
+    let senderProfiles = [];
+    if (senderIds.length > 0) {
+      const { data: profiles, error: profilesError } = await supabase
+        .from('users')
+        .select('id, username, display_name, avatar_url')
+        .in('id', senderIds);
+
+      if (profilesError) {
+        console.error('Fetch unread DM sender profiles error:', profilesError);
+      } else {
+        senderProfiles = profiles || [];
+      }
+    }
+
+    const enrichedLatestMessages = latestMessages.slice(-15).map((message) => {
+      const profile = senderProfiles.find((sender) => sender.id === message.senderId);
+      return {
+        ...message,
+        senderName: profile?.display_name || profile?.username || null,
+        senderAvatarUrl: profile?.avatar_url || null,
+        sender: profile
+          ? {
+              id: profile.id,
+              username: profile.username,
+              display_name: profile.display_name,
+              avatar_url: profile.avatar_url,
+            }
+          : null,
+      };
+    });
+
     return res.status(200).json({
       unreadBySender,
-      latestMessages: latestMessages.slice(-15),
+      latestMessages: enrichedLatestMessages,
       cursor: throughDate.toISOString(),
     });
   } catch (error) {
