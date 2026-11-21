@@ -3,6 +3,7 @@ const {
   answerCall,
   createLiveKitToken,
   createRoom,
+  getActiveFriendActivities,
   getInvitations,
   getRoom,
   inviteParticipants,
@@ -15,6 +16,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 router.get('/invitations', getInvitations);
+router.get('/active', getActiveFriendActivities);
 router.post('/', createRoom);
 router.get('/:roomId', getRoom);
 router.post('/:roomId/answer', answerCall);

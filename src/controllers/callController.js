@@ -158,6 +158,77 @@ const getRoom = async (req, res) => {
   }
 };
 
+const getActiveFriendActivities = async (req, res) => {
+  try {
+    const { data: friendships, error: friendshipsError } = await supabase
+      .from('friends')
+      .select('user_id, friend_id')
+      .eq('status', 'accepted')
+      .or(`user_id.eq.${req.user.id},friend_id.eq.${req.user.id}`);
+    if (friendshipsError) throw friendshipsError;
+
+    const friendIds = [...new Set((friendships || []).map((friendship) => (
+      friendship.user_id === req.user.id ? friendship.friend_id : friendship.user_id
+    )))];
+    if (friendIds.length === 0) return res.status(200).json({ activities: [] });
+
+    const { data: memberships, error: membershipsError } = await supabase
+      .from('call_participants')
+      .select('room_id, user_id, joined_at')
+      .eq('status', 'active')
+      .in('user_id', friendIds);
+    if (membershipsError) throw membershipsError;
+    if (!memberships?.length) return res.status(200).json({ activities: [] });
+
+    const roomIds = [...new Set(memberships.map(({ room_id }) => room_id))];
+    const { data: rooms, error: roomsError } = await supabase
+      .from('call_rooms')
+      .select('id, created_at')
+      .eq('status', 'active')
+      .in('id', roomIds);
+    if (roomsError) throw roomsError;
+
+    const activeRoomIds = new Set((rooms || []).map(({ id }) => id));
+    if (activeRoomIds.size === 0) return res.status(200).json({ activities: [] });
+
+    const activeMemberships = memberships.filter(({ room_id }) => activeRoomIds.has(room_id));
+    const activeUserIds = [...new Set(activeMemberships.map(({ user_id }) => user_id))];
+    const { data: profiles, error: profilesError } = await supabase
+      .from('users')
+      .select('id, username, display_name, avatar_url')
+      .in('id', activeUserIds);
+    if (profilesError) throw profilesError;
+
+    const { data: allParticipants, error: participantsError } = await supabase
+      .from('call_participants')
+      .select('room_id')
+      .eq('status', 'active')
+      .in('room_id', [...activeRoomIds]);
+    if (participantsError) throw participantsError;
+
+    const participantCounts = (allParticipants || []).reduce((counts, membership) => {
+      counts[membership.room_id] = (counts[membership.room_id] || 0) + 1;
+      return counts;
+    }, {});
+
+    const activities = activeMemberships.map((membership) => {
+      const friend = profiles?.find(({ id }) => id === membership.user_id);
+      return {
+        roomId: membership.room_id,
+        friendId: membership.user_id,
+        friend: friend || null,
+        participantCount: participantCounts[membership.room_id],
+        joinedAt: membership.joined_at,
+      };
+    });
+
+    return res.status(200).json({ activities });
+  } catch (error) {
+    console.error('Get active friend activities error:', error);
+    return res.status(500).json({ error: 'Failed to load active friends.' });
+  }
+};
+
 const createRoom = async (req, res) => {
   const { targetUserId, noiseSuppressionEnabled } = req.body || {};
   if (!isUuid(targetUserId) || targetUserId === req.user.id) {
@@ -454,6 +525,7 @@ module.exports = {
   answerCall,
   createLiveKitToken,
   createRoom,
+  getActiveFriendActivities,
   getInvitations,
   getRoom,
   inviteParticipants,
